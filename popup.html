@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=320, initial-scale=1" />
+  <title>Email Code Reader</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>Email Code Reader</h1>
+      <p class="subtitle">Verification codes from your inbox</p>
+    </header>
+
+    <div id="auth-section" class="section hidden">
+      <p>Sign in with Google to read codes from your Gmail.</p>
+      <button id="btn-signin" class="btn btn-primary">Sign in with Google</button>
+    </div>
+
+    <div id="main-section" class="section hidden">
+      <div class="toolbar">
+        <button id="btn-refresh" class="btn btn-ghost" title="Refresh">↻ Refresh</button>
+        <button id="btn-copy" class="btn btn-ghost" title="Copy latest code">Copy</button>
+        <button id="btn-signout" class="btn btn-ghost">Sign out</button>
+      </div>
+      <div id="codes-list" class="codes-list"></div>
+      <div id="empty-state" class="empty-state hidden">
+        <p>No verification codes found in recent emails.</p>
+        <p class="hint">Try refreshing after you receive a new code.</p>
+      </div>
+      <div id="loading" class="loading hidden">Checking your inbox…</div>
+      <div id="error" class="error hidden"></div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
