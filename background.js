@@ -1,7 +1,10 @@
-// Email Code Reader - background service worker
+// Email Reader - background service worker
 // Fetches Gmail messages and extracts verification codes
 
 const GMAIL_API = 'https://www.googleapis.com/gmail/v1/users/me';
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 function getAuthToken(options = {}) {
   const interactive = options.interactive !== false;
@@ -16,21 +19,147 @@ function getAuthToken(options = {}) {
   });
 }
 
+function getStored(name) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([name], (r) => resolve(r[name]));
+  });
+}
+
+function setStored(obj) {
+  return new Promise((resolve) => chrome.storage.local.set(obj, resolve));
+}
+
+async function getStoredWebCreds() {
+  const clientId = await getStored('webClientId');
+  const clientSecret = await getStored('webClientSecret');
+  if (clientId && clientSecret) return { clientId, clientSecret };
+  return null;
+}
+
+async function webAuthGetAccessToken(interactive) {
+  const creds = await getStoredWebCreds();
+  if (!creds) return null;
+  const { clientId, clientSecret } = creds;
+  const redirectUri = chrome.identity.getRedirectURL();
+  const storedAccess = await getStored('webAccessToken');
+  const storedExpiry = await getStored('webTokenExpiry');
+  const storedRefresh = await getStored('webRefreshToken');
+  if (storedAccess && storedExpiry && Date.now() < storedExpiry - 60000) {
+    return storedAccess;
+  }
+  if (storedRefresh) {
+    try {
+      const res = await fetch(GOOGLE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: storedRefresh,
+          grant_type: 'refresh_token',
+        }).toString(),
+      });
+      const data = await res.json();
+      if (data.access_token) {
+        await setStored({
+          webAccessToken: data.access_token,
+          webTokenExpiry: Date.now() + (data.expires_in || 3600) * 1000,
+        });
+        return data.access_token;
+      }
+    } catch (_) {}
+  }
+  if (!interactive) return null;
+  const state = Math.random().toString(36).slice(2);
+  const authUrl =
+    GOOGLE_AUTH_URL +
+    '?client_id=' + encodeURIComponent(clientId) +
+    '&redirect_uri=' + encodeURIComponent(redirectUri) +
+    '&response_type=code&scope=' + encodeURIComponent(GMAIL_SCOPE) +
+    '&access_type=offline&prompt=consent&state=' + encodeURIComponent(state);
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow(
+      { url: authUrl, interactive: true },
+      async (callbackUrl) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        const u = new URL(callbackUrl);
+        const code = u.searchParams.get('code');
+        if (!code) {
+          reject(new Error('No authorization code in response'));
+          return;
+        }
+        try {
+          const res = await fetch(GOOGLE_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: clientId,
+              client_secret: clientSecret,
+              code,
+              redirect_uri: redirectUri,
+              grant_type: 'authorization_code',
+            }).toString(),
+          });
+          const data = await res.json();
+          if (data.error) {
+            reject(new Error(data.error_description || data.error));
+            return;
+          }
+          await setStored({
+            webAccessToken: data.access_token,
+            webTokenExpiry: Date.now() + (data.expires_in || 3600) * 1000,
+            webRefreshToken: data.refresh_token || (await getStored('webRefreshToken')),
+          });
+          resolve(data.access_token);
+        } catch (e) {
+          reject(e);
+        }
+      }
+    );
+  });
+}
+
+async function getAccessToken(interactive = false) {
+  const creds = await getStoredWebCreds();
+  if (creds) {
+    try {
+      const token = await webAuthGetAccessToken(interactive);
+      if (token) return token;
+    } catch (e) {
+      throw e;
+    }
+  }
+  return getAuthToken({ interactive });
+}
+
 function clearAuthToken() {
   return new Promise((resolve) => {
-    chrome.identity.getAuthToken({ interactive: false }, (token) => {
-      if (token) {
-        chrome.identity.removeCachedAuthToken({ token }, resolve);
-      } else {
-        resolve();
+    chrome.storage.local.remove(
+      ['webAccessToken', 'webTokenExpiry', 'webRefreshToken'],
+      () => {
+        chrome.identity.getAuthToken({ interactive: false }, (token) => {
+          if (token) {
+            chrome.identity.removeCachedAuthToken({ token }, resolve);
+          } else {
+            resolve();
+          }
+        });
       }
-    });
+    );
   });
+}
+
+function getHeader(headers, name) {
+  const h = (headers || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
+  return h ? h.value : '';
 }
 
 function decodeBase64Url(data) {
   if (!data) return '';
-  const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
+  const base64 = String(data).replace(/-/g, '+').replace(/_/g, '/');
   try {
     return decodeURIComponent(escape(atob(base64)));
   } catch {
@@ -40,58 +169,33 @@ function decodeBase64Url(data) {
 
 function getBodyFromPayload(payload) {
   let text = '';
+  let html = '';
+  const decode = (data) => decodeBase64Url(data);
   if (payload.body && payload.body.data) {
-    text = decodeBase64Url(payload.body.data);
+    const raw = decode(payload.body.data);
+    if ((payload.mimeType || '').toLowerCase() === 'text/html') {
+      html = raw;
+      text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    } else {
+      text = raw;
+    }
   }
   if (payload.parts) {
     for (const part of payload.parts) {
       if (part.mimeType === 'text/plain' && part.body && part.body.data) {
-        text = text || decodeBase64Url(part.body.data);
-        break;
+        text = text || decode(part.body.data);
       }
       if (part.mimeType === 'text/html' && part.body && part.body.data) {
-        const html = decodeBase64Url(part.body.data);
-        text = text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const partHtml = decode(part.body.data);
+        html = html || partHtml;
+        text = text || partHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
       }
     }
   }
-  return text;
+  return { text: text || '', html: html || null };
 }
 
-// Patterns for common verification/OTP codes (order matters: more specific first)
-const CODE_PATTERNS = [
-  /\b(?:code|verification code|one-time code|OTP|one-time password|passcode|pin)[\s:]*[:\-]?\s*([A-Z0-9]{4,8})\b/i,
-  /\b(?:code|code is)[\s:]*[:\-]?\s*([0-9]{4,8})\b/i,
-  /\b([0-9]{6})\b(?!\d)/,                    // standalone 6-digit
-  /\b([0-9]{4})\b(?!\d)/,                    // standalone 4-digit
-  /\b([0-9]{8})\b(?!\d)/,                    // standalone 8-digit
-  /(?:^|\s)([0-9]{4}[\s\-]?[0-9]{4})(?:\s|$)/, // 4-4 with optional space/dash
-  /\b([A-Z0-9]{6})\b(?!\w)/,                 // 6-char alphanumeric
-];
-
-function extractCodes(text) {
-  if (!text || typeof text !== 'string') return [];
-  const codes = new Set();
-  const normalized = text.replace(/\s+/g, ' ');
-  for (const re of CODE_PATTERNS) {
-    let m;
-    const r = new RegExp(re.source, 'gi');
-    while ((m = r.exec(normalized)) !== null) {
-      const code = m[1].replace(/[\s\-]/g, '').trim();
-      if (code.length >= 4 && code.length <= 8 && /^[A-Z0-9]+$/i.test(code)) {
-        codes.add(code);
-      }
-    }
-  }
-  return Array.from(codes);
-}
-
-function getHeader(headers, name) {
-  const h = headers.find((x) => x.name.toLowerCase() === name.toLowerCase());
-  return h ? h.value : '';
-}
-
-async function fetchMessage(token, id) {
+async function fetchMessageFull(token, id) {
   const res = await fetch(`${GMAIL_API}/messages/${id}?format=full`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -99,9 +203,39 @@ async function fetchMessage(token, id) {
   return res.json();
 }
 
-async function fetchRecentMessages(token, maxResults = 20) {
+async function getEmailContent(messageId) {
+  const token = await getAccessToken(false);
+  if (!token) throw new Error('Not signed in');
+  const full = await fetchMessageFull(token, messageId);
+  const payload = full.payload || {};
+  const headers = payload.headers || [];
+  const from = getHeader(headers, 'From');
+  const subject = getHeader(headers, 'Subject');
+  const date = getHeader(headers, 'Date');
+  const { text, html } = getBodyFromPayload(payload);
+  const body = text || full.snippet || '';
+  return {
+    from: (from || '').replace(/<[^>]+>/, '').trim(),
+    subject: subject || '',
+    date: date || '',
+    body,
+    bodyHtml: html,
+  };
+}
+
+async function fetchMessageMetadata(token, id) {
+  const res = await fetch(`${GMAIL_API}/messages/${id}?format=metadata`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Gmail API: ${res.status}`);
+  return res.json();
+}
+
+const MAX_EMAILS = 25;
+
+async function fetchRecentMessages(token, maxResults = 25) {
   const listRes = await fetch(
-    `${GMAIL_API}/messages?maxResults=${maxResults}&q=is:unread OR newer_than:1d`,
+    `${GMAIL_API}/messages?maxResults=${maxResults}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!listRes.ok) throw new Error(`Gmail API list: ${listRes.status}`);
@@ -110,46 +244,53 @@ async function fetchRecentMessages(token, maxResults = 20) {
   return messages;
 }
 
-async function extractCodesFromInbox(token) {
-  const messages = await fetchRecentMessages(token);
+async function getRecentEmails(token) {
+  const messages = await fetchRecentMessages(token, MAX_EMAILS);
   const results = [];
-  const seenCodes = new Set();
 
-  for (const msg of messages.slice(0, 15)) {
+  for (const msg of messages) {
     try {
-      const full = await fetchMessage(token, msg.id);
-      const payload = full.payload || {};
-      const body = getBodyFromPayload(payload);
-      const headers = payload.headers || [];
-      const subject = getHeader(headers, 'From');
+      const full = await fetchMessageMetadata(token, msg.id);
+      const headers = (full.payload && full.payload.headers) || [];
       const from = getHeader(headers, 'From');
+      const subject = getHeader(headers, 'Subject');
       const date = getHeader(headers, 'Date');
       const snippet = full.snippet || '';
+      const fromClean = (from || '').replace(/<[^>]+>/, '').trim();
 
-      const text = body || snippet;
-      const codes = extractCodes(text);
-      for (const code of codes) {
-        if (seenCodes.has(code)) continue;
-        seenCodes.add(code);
-        results.push({
-          code,
-          from: from.replace(/<[^>]+>/, '').trim(),
-          subject: getHeader(headers, 'Subject'),
-          date,
-          id: msg.id,
-        });
-      }
+      results.push({
+        type: 'email',
+        id: msg.id,
+        from: fromClean,
+        subject: subject || '',
+        date: date || '',
+        snippet: snippet.slice(0, 200),
+      });
     } catch (e) {
-      console.warn('Failed to parse message', msg.id, e);
+      console.warn('Failed to fetch message', msg.id, e);
     }
   }
 
   results.sort((a, b) => new Date(b.date) - new Date(a.date));
-  return results.slice(0, 10);
+  return results;
 }
 
 const POLL_ALARM_NAME = 'emailCodePoll';
+const POLL_ALARM_NAME_OFFSET = 'emailCodePollOffset';
 const POLL_INTERVAL_MINUTES = 1;
+const MAX_DISMISSED = 500;
+
+function itemKey(item) {
+  if (item.type === 'email') return item.id;
+  if (item.type === 'link') return `${item.id}:link:${item.url}`;
+  return `${item.id}:code:${item.code || ''}`;
+}
+
+async function filterByDismissed(raw) {
+  const dismissed = await getStored('dismissedItems');
+  const set = new Set(Array.isArray(dismissed) ? dismissed : []);
+  return raw.filter((item) => !set.has(itemKey(item)));
+}
 
 function saveCodesAndBadge(codes) {
   const list = Array.isArray(codes) ? codes : [];
@@ -165,39 +306,57 @@ function saveCodesAndBadge(codes) {
 function schedulePolling() {
   chrome.alarms.create(POLL_ALARM_NAME, {
     periodInMinutes: POLL_INTERVAL_MINUTES,
-    delayInMinutes: 0.1,
+    delayInMinutes: 0.05,
+  });
+  chrome.alarms.create(POLL_ALARM_NAME_OFFSET, {
+    periodInMinutes: POLL_INTERVAL_MINUTES,
+    delayInMinutes: 0.55,
   });
 }
 
 function clearPolling() {
   chrome.alarms.clear(POLL_ALARM_NAME);
+  chrome.alarms.clear(POLL_ALARM_NAME_OFFSET);
   chrome.action.setBadgeText({ text: '' });
 }
 
-async function fetchAndCacheCodes(interactive = false) {
-  const token = await getAuthToken({ interactive });
-  const codes = await extractCodesFromInbox(token);
-  saveCodesAndBadge(codes);
-  return codes;
+async function fetchAndCacheEmails(interactive = false) {
+  const token = await getAccessToken(interactive);
+  const raw = await getRecentEmails(token);
+  const filtered = await filterByDismissed(raw);
+  saveCodesAndBadge(filtered);
+  return filtered;
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name !== POLL_ALARM_NAME) return;
-  getAuthToken({ interactive: false })
-    .then((token) => extractCodesFromInbox(token))
+  if (alarm.name !== POLL_ALARM_NAME && alarm.name !== POLL_ALARM_NAME_OFFSET) return;
+  getAccessToken(false)
+    .then((token) => getRecentEmails(token))
+    .then((raw) => filterByDismissed(raw))
     .then(saveCodesAndBadge)
     .catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === 'getCodes') {
-    fetchAndCacheCodes(true)
-      .then((codes) => {
+    fetchAndCacheEmails(true)
+      .then((list) => {
         schedulePolling();
-        return codes;
+        return list;
       })
       .then(sendResponse)
-      .catch((err) => sendResponse({ error: err?.message || 'Failed to fetch codes' }));
+      .catch((err) => sendResponse({ error: err?.message || 'Failed to fetch emails' }));
+    return true;
+  }
+  if (request.action === 'forceSignIn') {
+    clearAuthToken()
+      .then(() => fetchAndCacheEmails(true))
+      .then((list) => {
+        schedulePolling();
+        return list;
+      })
+      .then(sendResponse)
+      .catch((err) => sendResponse({ error: err?.message || 'Failed to sign in' }));
     return true;
   }
   if (request.action === 'signOut') {
@@ -207,22 +366,55 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       .catch(() => sendResponse({ ok: true }));
     return true;
   }
-  if (request.action === 'checkAuth') {
-    chrome.identity.getAuthToken({ interactive: false }, (token) => {
-      sendResponse({ signedIn: !!token });
+  if (request.action === 'dismiss') {
+    const item = request.item;
+    if (!item || !item.id) {
+      sendResponse({ error: 'Missing item' });
+      return true;
+    }
+    const key = itemKey(item);
+    getStored('dismissedItems').then((list) => {
+      const arr = Array.isArray(list) ? list : [];
+      if (!arr.includes(key)) arr.push(key);
+      if (arr.length > MAX_DISMISSED) arr.splice(0, arr.length - MAX_DISMISSED);
+      chrome.storage.local.set({ dismissedItems: arr }, () => {
+        getStored('cachedCodes').then((cached) => {
+          const current = Array.isArray(cached) ? cached : [];
+          const filtered = current.filter((i) => itemKey(i) !== key);
+          saveCodesAndBadge(filtered);
+          sendResponse(filtered);
+        });
+      });
     });
+    return true;
+  }
+  if (request.action === 'getEmailContent') {
+    getEmailContent(request.messageId)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ error: err?.message || 'Failed to load email' }));
+    return true;
+  }
+  if (request.action === 'checkAuth') {
+    (async () => {
+      const creds = await getStoredWebCreds();
+      if (creds) {
+        const token = await getStored('webAccessToken');
+        const refresh = await getStored('webRefreshToken');
+        sendResponse({ signedIn: !!(token || refresh) });
+      } else {
+        chrome.identity.getAuthToken({ interactive: false }, (token) => {
+          sendResponse({ signedIn: !!token });
+        });
+      }
+    })();
     return true;
   }
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.identity.getAuthToken({ interactive: false }, (token) => {
-    if (token) schedulePolling();
-  });
+  getAccessToken(false).then((token) => { if (token) schedulePolling(); }).catch(() => {});
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.identity.getAuthToken({ interactive: false }, (token) => {
-    if (token) schedulePolling();
-  });
+  getAccessToken(false).then((token) => { if (token) schedulePolling(); }).catch(() => {});
 });

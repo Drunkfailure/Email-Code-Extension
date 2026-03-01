@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Email Reader – Options</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 24px; }
+    h1 { font-size: 18px; }
+    p { color: #555; font-size: 13px; }
+    label { display: block; margin-top: 12px; font-weight: 500; }
+    input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+    .mono { font-family: monospace; font-size: 12px; background: #f0f0f0; padding: 8px; word-break: break-all; margin: 8px 0; }
+    button { margin-top: 16px; padding: 8px 16px; background: #0071e3; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #0077ed; }
+    .saved { color: green; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Email Reader – OAuth (optional)</h1>
+  <p>If you get <strong>Error 400: unsupported_response_type</strong> with the built-in Chrome extension sign-in, use a <strong>Web application</strong> OAuth client instead.</p>
+  <ol style="font-size: 13px; color: #555;">
+    <li>In Google Cloud Console go to <strong>Credentials</strong> → <strong>Create credentials</strong> → <strong>OAuth client ID</strong>.</li>
+    <li>Application type: <strong>Web application</strong>.</li>
+    <li>Under <strong>Authorized redirect URIs</strong>, add exactly this (copy the whole line):</li>
+  </ol>
+  <div class="mono" id="redirect-uri">—</div>
+  <label>Web application Client ID</label>
+  <input type="text" id="web-client-id" placeholder="xxxxx.apps.googleusercontent.com" />
+  <label>Web application Client secret</label>
+  <input type="password" id="web-client-secret" placeholder="GOCSPX-..." />
+  <button id="save">Save</button>
+  <div id="status" class="saved"></div>
+
+  <hr style="margin: 24px 0; border: none; border-top: 1px solid #eee;" />
+  <h2 style="font-size: 16px;">Email filters</h2>
+  <p>Only look for codes and verification links in emails that match <em>any</em> of these. Leave blank to use defaults (focused on real verification emails like Trello, Squarespace, Kroger).</p>
+  <label>Sender contains (comma-separated)</label>
+  <input type="text" id="filter-sender" placeholder="e.g. noreply, no-reply, mailer, donotreply" />
+  <label>Subject contains (comma-separated)</label>
+  <input type="text" id="filter-subject" placeholder="e.g. verify your email, verification code, confirm your email" />
+  <button id="save-filters">Save filters</button>
+  <div id="status-filters" class="saved"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

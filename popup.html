@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=320, initial-scale=1" />
-  <title>Email Code Reader</title>
+  <title>Email Reader</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <div class="container">
     <header class="header">
-      <h1>Email Code Reader</h1>
-      <p class="subtitle">Verification codes from your inbox</p>
+      <h1>Email Reader</h1>
+      <p class="subtitle">First 25 emails — new ones appear as list updates</p>
     </header>
 
     <div id="auth-section" class="section hidden">
@@ -19,18 +19,28 @@
     </div>
 
     <div id="main-section" class="section hidden">
-      <div class="toolbar">
-        <button id="btn-refresh" class="btn btn-ghost" title="Refresh">↻ Refresh</button>
-        <button id="btn-copy" class="btn btn-ghost" title="Copy latest code">Copy</button>
-        <button id="btn-signout" class="btn btn-ghost">Sign out</button>
+      <div id="list-view">
+        <div class="toolbar">
+          <button id="btn-refresh" class="btn btn-ghost" title="Refresh">↻ Refresh</button>
+          <button id="btn-signout" class="btn btn-ghost">Sign out</button>
+        </div>
+        <div id="codes-list" class="codes-list"></div>
+        <div id="empty-state" class="empty-state hidden">
+          <p>No emails yet. Refresh or check back in a moment.</p>
+          <p class="hint">Try refreshing after you receive a new code.</p>
+        </div>
+        <div id="loading" class="loading hidden">Checking your inbox…</div>
+        <div id="error" class="error hidden"></div>
       </div>
-      <div id="codes-list" class="codes-list"></div>
-      <div id="empty-state" class="empty-state hidden">
-        <p>No verification codes found in recent emails.</p>
-        <p class="hint">Try refreshing after you receive a new code.</p>
+      <div id="email-view" class="email-view hidden">
+        <button id="btn-back" class="btn btn-ghost back-btn">← Back</button>
+        <div class="email-view-header">
+          <div id="email-view-subject" class="email-view-subject"></div>
+          <div id="email-view-meta" class="email-view-meta"></div>
+        </div>
+        <div id="email-view-loading" class="email-view-loading hidden">Loading…</div>
+        <div id="email-view-body" class="email-view-body"></div>
       </div>
-      <div id="loading" class="loading hidden">Checking your inbox…</div>
-      <div id="error" class="error hidden"></div>
     </div>
   </div>
   <script src="popup.js"></script>

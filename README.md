@@ -1,6 +1,6 @@
-# Email Code Reader – Chrome Extension
+# Email Reader – Chrome Extension
 
-Shows verification codes from your Gmail inbox in the extension popup so you don’t have to open the email.
+Shows verification codes from your Gmail inbox in the extension popup so you don’t have to open the inbox.
 
 ## Features
 
@@ -11,6 +11,14 @@ Shows verification codes from your Gmail inbox in the extension popup so you don
 - **Badge** – The extension icon shows how many codes are currently cached (e.g. “3”).
 - **One-click copy** – Click a code or use “Copy” to copy the latest code.
 - **Refresh** – “Refresh” fetches recent messages on demand.
+
+## Repository setup (sensitive data)
+
+`manifest.json` is **not** committed — it contains your OAuth client ID and is listed in `.gitignore`.
+
+1. **Copy the example manifest**:  
+   `cp manifest-example.json manifest.json` (or copy `manifest-example.json` to `manifest.json` by hand).
+2. **Add your credentials** in `manifest.json` when you create your OAuth client (see [Use the Client ID in the extension](#2-use-the-client-id-in-the-extension) below).
 
 ## Setup (required)
 
@@ -27,17 +35,48 @@ The extension needs a **Google OAuth 2.0 Client ID** (Chrome app type) so it can
 5. Create credentials:
    - **APIs & Services** → **Credentials** → **Create credentials** → **OAuth client ID**.
    - Application type: **Chrome extension**.
-   - Name: e.g. “Email Code Reader”.
-   - **Application ID**: you get this from your extension’s “Extension ID” in `chrome://extensions` (load the unpacked extension first, then copy the ID).
+   - Name: e.g. “Email Reader”.
+   - **Application ID** / **Item ID**: use this extension’s ID exactly: **`pbahclkpofclhckpkjgoifajlhjdjgnp`** (note: `goifajlh` not `golfajih` — copy from `chrome://extensions` to avoid typos).
    - **Create** and copy the **Client ID** (looks like `xxxxx.apps.googleusercontent.com`).
 
 ### 2. Use the Client ID in the extension
 
-1. Load the extension once to get an ID: **Chrome** → **Extensions** → **Developer mode** → **Load unpacked** → select the `Email-Code-Extension` folder.
-2. Copy the **Extension ID** (e.g. `abcdefghijklmnopqrstuvwxyz123456`).
-3. In Google Cloud Console, when creating the OAuth client, paste this as the **Application ID**.
-4. Open `manifest.json` and replace:
-   - `YOUR_CLIENT_ID` with your full Client ID (e.g. `123456789-abc.apps.googleusercontent.com`).
+1. **Create your local manifest** (if you haven’t): copy `manifest-example.json` to `manifest.json`.
+2. Load the extension once to get an ID: **Chrome** → **Extensions** → **Developer mode** → **Load unpacked** → select the `Email-Code-Extension` folder.
+3. Copy the **Extension ID** (e.g. `abcdefghijklmnopqrstuvwxyz123456`).
+4. In Google Cloud Console, when creating the OAuth client, paste this as the **Application ID**.
+5. Open `manifest.json` and replace `YOUR_CLIENT_ID.apps.googleusercontent.com` with your full **Client ID** (e.g. `123456789-abc.apps.googleusercontent.com`).
+
+### If you see “bad client id” or “OAuth2 not granted or revoked”
+
+- **Application type must be “Chrome extension”** (not “Web application”). If you created a Web application client by mistake, create a new OAuth client and choose **Chrome extension**.
+- **Application ID must match exactly**: `pbahclkpofclhckpkjgoifajlhjdjgnp` (no spaces, no slash). In **Credentials** → your OAuth client → **Edit** → set **Application ID** to that value and save.
+- After fixing the client, remove the extension and **Load unpacked** again so Chrome picks up the correct client. If you still see “OAuth2 not granted or revoked”, go to [Google account permissions](https://myaccount.google.com/permissions), remove access for your app if listed, then try signing in again from the extension.
+
+### If you see "Error 400: unsupported_response_type"
+
+Use the **Web application** OAuth flow instead of the Chrome extension client:
+
+1. **Create a Web application OAuth client** in Google Cloud Console:
+   - **Credentials** → **Create credentials** → **OAuth client ID**.
+   - Application type: **Web application**.
+   - Under **Authorized redirect URIs**, click **Add URI** and add the exact URL shown in the extension’s **Options** page (see step 2). It will look like `https://pbahclkpofclhckpkjgoifajlhjdjgnp.chromiumapp.org/`.
+   - Create and copy the **Client ID** and **Client secret**.
+
+2. **Set the Web client in the extension**: Right‑click the extension icon → **Options** (or open `chrome://extensions`, find Email Reader, click **Details** → **Extension options**). Paste the Web application **Client ID** and **Client secret**, then click **Save**. The Options page shows the redirect URI you must add in Google Cloud.
+
+3. **Sign in from the extension**: Open the extension popup and click **Sign in with Google**. The browser will open the normal Google sign‑in; after you allow access, the extension will receive the token and work as usual.
+
+4. **OAuth consent screen**: If the app is in **Testing** mode, add your Google account under **OAuth consent screen** → **Test users**.
+
+### If you see "Access blocked" or "Error 403: access_denied"
+
+Your app is in **Testing** mode, so only approved test users can sign in. Add your account:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/) go to **APIs & Services** → **OAuth consent screen**.
+2. Scroll to **Test users** and click **Add users**.
+3. Enter your Google address (e.g. `Zbrech68@gmail.com`) and click **Save**.
+4. Try signing in from the extension again.
 
 So the `oauth2` section looks like:
 
@@ -60,30 +99,7 @@ So the `oauth2` section looks like:
 
 ## Optional: custom icons
 
-To add your own icons, create an `icons` folder and add:
-
-- `icons/icon16.png` (16×16)
-- `icons/icon32.png` (32×32)
-- `icons/icon48.png` (48×48)
-
-Then in `manifest.json` add back under `"action"` and at the root:
-
-```json
-"action": {
-  "default_popup": "popup.html",
-  "default_icon": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png"
-  },
-  "default_title": "Email Code Reader"
-},
-"icons": {
-  "16": "icons/icon16.png",
-  "32": "icons/icon32.png",
-  "48": "icons/icon48.png"
-}
-```
+The repo includes a default icon in `assets/icon128.png` (used for toolbar and store). To use your own icons, replace those files or add different sizes and point `manifest.json` at them (e.g. `icons/icon16.png`, `icons/icon48.png`, `icons/icon128.png`).
 
 ## Privacy and security
 

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Email</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #1a1a1a;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #fff;
+    }
+    .header { margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #e5e5e7; }
+    .header .subject { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+    .header .meta { font-size: 13px; color: #6e6e73; }
+    .body {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .body a { color: #0071e3; text-decoration: none; }
+    .body a:hover { text-decoration: underline; }
+    .email-body-iframe { display: block; width: 100%; min-height: 300px; border: none; }
+    .error { color: #c00; }
+    .loading { color: #6e6e73; }
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading">Loading…</div>
+  <div id="content" class="hidden">
+    <div class="header">
+      <div class="subject" id="subject"></div>
+      <div class="meta" id="meta"></div>
+    </div>
+    <div class="body" id="body"></div>
+  </div>
+  <div id="error" class="error hidden"></div>
+  <script src="email-view.js"></script>
+</body>
+</html>

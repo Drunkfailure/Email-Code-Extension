@@ -1,13 +1,19 @@
 const authSection = document.getElementById('auth-section');
 const mainSection = document.getElementById('main-section');
+const listView = document.getElementById('list-view');
+const emailView = document.getElementById('email-view');
 const codesList = document.getElementById('codes-list');
 const emptyState = document.getElementById('empty-state');
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
 const btnSignIn = document.getElementById('btn-signin');
 const btnRefresh = document.getElementById('btn-refresh');
-const btnCopy = document.getElementById('btn-copy');
 const btnSignOut = document.getElementById('btn-signout');
+const btnBack = document.getElementById('btn-back');
+const emailViewSubject = document.getElementById('email-view-subject');
+const emailViewMeta = document.getElementById('email-view-meta');
+const emailViewLoading = document.getElementById('email-view-loading');
+const emailViewBody = document.getElementById('email-view-body');
 
 function show(el) {
   el.classList.remove('hidden');
@@ -31,25 +37,49 @@ function checkAuth() {
   });
 }
 
-function renderCodes(codes) {
+function renderCodes(items) {
   codesList.innerHTML = '';
   hide(emptyState);
-  if (!codes || codes.length === 0) {
+  const list = Array.isArray(items) ? items : [];
+  const emails = list.filter((i) => i.type === 'email' && i.id);
+  if (emails.length === 0) {
     show(emptyState);
     return;
   }
-  codes.forEach((item) => {
+  emails.forEach((item) => {
     const card = document.createElement('div');
-    card.className = 'code-card';
+    card.className = 'code-card email-card';
+    card.dataset.itemKey = item.id;
+    const gmailUrl = `https://mail.google.com/mail/u/0/#inbox/${item.id}`;
+    const snippet = (item.snippet || '').replace(/\s+/g, ' ').trim();
     card.innerHTML = `
-      <div class="code-value" data-code="${escapeHtml(item.code)}">${escapeHtml(item.code)}</div>
-      <div class="meta">
-        <span class="from">${escapeHtml(item.from)}</span>
-        ${item.subject ? `<br>${escapeHtml(item.subject)}` : ''}
+      <button class="card-dismiss" title="Remove from list" aria-label="Dismiss">×</button>
+      <div class="email-subject">${escapeHtml(item.subject || '(no subject)')}</div>
+      <div class="meta"><span class="from">${escapeHtml(item.from)}</span></div>
+      ${snippet ? `<div class="email-snippet">${escapeHtml(snippet)}</div>` : ''}
+      <div class="email-actions">
+        <button type="button" class="email-open email-action btn-inline">View</button>
+        <a class="email-open" href="${escapeHtml(gmailUrl)}" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
       </div>
     `;
-    card.querySelector('.code-value').addEventListener('click', () => copyCode(item.code));
+    card.querySelector('.card-dismiss').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dismissItem(item);
+    });
+    card.querySelector('.btn-inline').addEventListener('click', (e) => {
+      e.preventDefault();
+      openEmailInPopup(item.id);
+    });
     codesList.appendChild(card);
+  });
+}
+
+function dismissItem(item) {
+  chrome.runtime.sendMessage({ action: 'dismiss', item }, (response) => {
+    if (chrome.runtime.lastError) return;
+    if (response?.error) return;
+    if (Array.isArray(response)) renderCodes(response);
   });
 }
 
@@ -88,25 +118,56 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-function copyCode(code) {
-  navigator.clipboard.writeText(code).then(() => showCopiedToast());
+function linkify(text) {
+  if (!text) return '';
+  const parts = String(text).split(/(https?:\/\/[^\s<>"']+)/g);
+  return parts
+    .map((part) => {
+      if (/^https?:\/\//.test(part)) {
+        return '<a href="' + escapeHtml(part) + '" target="_blank" rel="noopener">' + escapeHtml(part) + '</a>';
+      }
+      return escapeHtml(part);
+    })
+    .join('');
 }
 
-function copyLatestCode() {
-  const firstCard = codesList.querySelector('.code-card .code-value');
-  if (firstCard) {
-    const code = firstCard.getAttribute('data-code') || firstCard.textContent;
-    navigator.clipboard.writeText(code).then(() => showCopiedToast());
-  }
+function openEmailInPopup(messageId) {
+  show(emailView);
+  hide(listView);
+  emailViewSubject.textContent = '';
+  emailViewMeta.textContent = '';
+  emailViewBody.innerHTML = '';
+  show(emailViewLoading);
+  hide(errorEl);
+
+  chrome.runtime.sendMessage({ action: 'getEmailContent', messageId }, (response) => {
+    hide(emailViewLoading);
+    if (chrome.runtime.lastError || response?.error) {
+      emailViewBody.textContent = response?.error || chrome.runtime.lastError?.message || 'Failed to load email.';
+      return;
+    }
+    emailViewSubject.textContent = response.subject || '(no subject)';
+    emailViewMeta.textContent = [response.from, response.date].filter(Boolean).join(' · ');
+    if (response.bodyHtml) {
+      const iframe = document.createElement('iframe');
+      iframe.setAttribute('sandbox', 'allow-popups');
+      iframe.className = 'email-view-iframe';
+      const doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><base target="_blank"></head><body style="margin:0;padding:8px;font-family:system-ui,sans-serif;font-size:14px;">' + response.bodyHtml + '</body></html>';
+      iframe.srcdoc = doc;
+      emailViewBody.innerHTML = '';
+      emailViewBody.appendChild(iframe);
+    } else {
+      emailViewBody.innerHTML = linkify(response.body || '');
+    }
+  });
 }
 
-function showCopiedToast() {
-  const toast = document.createElement('div');
-  toast.className = 'copied-toast';
-  toast.textContent = 'Copied to clipboard';
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 1500);
+function showListView() {
+  show(listView);
+  hide(emailView);
 }
+
+btnBack.addEventListener('click', showListView);
 
 function signOut() {
   chrome.runtime.sendMessage({ action: 'signOut' }, () => {
@@ -117,17 +178,23 @@ function signOut() {
 }
 
 btnSignIn.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ action: 'getCodes' }, () => {
-    if (!chrome.runtime.lastError) {
-      show(mainSection);
-      hide(authSection);
-      loadCodes();
+  setError('');
+  chrome.runtime.sendMessage({ action: 'forceSignIn' }, (response) => {
+    if (chrome.runtime.lastError) {
+      setError(chrome.runtime.lastError.message);
+      return;
     }
+    if (response?.error) {
+      setError(response.error);
+      return;
+    }
+    show(mainSection);
+    hide(authSection);
+    renderCodes(Array.isArray(response) ? response : []);
   });
 });
 
 btnRefresh.addEventListener('click', loadCodes);
-btnCopy.addEventListener('click', copyLatestCode);
 btnSignOut.addEventListener('click', signOut);
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
