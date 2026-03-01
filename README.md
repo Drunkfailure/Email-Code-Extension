@@ -107,15 +107,6 @@ The repo includes a default icon in `assets/icon128.png` (used for toolbar and s
 - OAuth and API requests go to Google; no code or email content is sent to any other server.
 - Codes are parsed locally and shown only in your browser.
 
-## Phone / SMS
-
-This version is **email-only**. Adding phone/SMS would require either:
-
-- A separate service (e.g. Twilio, or an Android app) that can read SMS and expose codes via an API, or
-- A native Android companion app with SMS permission and a way to talk to the extension (e.g. custom protocol or cloud sync).
-
-If you want to explore an SMS path later, we can design it (e.g. “SMS Code Reader” that uses a small backend or app).
-
 ## License
 
 MIT.
